@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>VR Target Practice - V29 (Stacked UI)</title>
+    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
+
+    <!-- ===================================
+         STILIZARE - INTERFAȚĂ 2D
+         Butoane, panouri de feedback și regulament
+         =================================== -->
+    <style>
+      /* --------- STILURI BUTOANE GENERALE --------- */
+      .ui-btn {
+        padding: 8px 12px;
+        background: #f0f0f0;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        cursor: pointer;
+        font-family: sans-serif;
+        font-weight: bold;
+        color: #333;
+        transition: 0.2s;
+      }
+      .ui-btn:hover { background: #e0e0e0; }
+      .ui-btn.selected { background: #2E8B57; color: white; border-color: #1e5c3a; }
+      
+      /* --------- BUTON FEEDBACK (JOS STÂNGA) --------- */
+      #btn-toggle-eval {
+        position: absolute; bottom: 15px; left: 20px;
+        z-index: 9999; background: #0055FF; color: white;
+        border: none; padding: 10px 15px; border-radius: 6px;
+        cursor: pointer; font-family: sans-serif; font-weight: bold;
+        box-shadow: 0px 2px 5px rgba(0,0,0,0.5);
+      }
+
+      /* --------- BUTON REGULAMENT (DEASUPRA FEEDBACK-ULUI) --------- */
+      #btn-toggle-rules {
+        position: absolute; bottom: 65px; left: 20px;
+        z-index: 9999; background: #FF8C00; color: white;
+        border: none; padding: 10px 15px; border-radius: 6px;
+        cursor: pointer; font-family: sans-serif; font-weight: bold;
+        box-shadow: 0px 2px 5px rgba(0,0,0,0.5);
+      }
+
+      /* --------- PANOUL FEEDBACK/EVALUARE --------- */
+      #evaluare-panel {
+        position: absolute; bottom: 115px; left: 20px;
+        background: rgba(255, 255, 255, 0.95);
+        padding: 15px; border-radius: 8px; width: 280px;
+        z-index: 9999; font-family: sans-serif;
+        box-shadow: 0px 4px 15px rgba(0,0,0,0.4);
+        display: none; 
+      }
+
+      /* --------- PANOUL REGULAMENT --------- */
+      #reguli-panel {
+        position: absolute; bottom: 115px; left: 20px;
+        background: rgba(255, 255, 255, 0.95);
+        padding: 20px; border-radius: 8px; width: 320px;
+        z-index: 9999; font-family: sans-serif;
+        box-shadow: 0px 4px 15px rgba(0,0,0,0.4);
+        display: none; 
+      }
+      
+      .reguli-titlu { margin: 0 0 10px 0; color: #333; font-size: 18px; border-bottom: 2px solid #ddd; padding-bottom: 5px; }
+      .reguli-text { margin: 5px 0; color: #444; font-size: 14px; line-height: 1.4; }
+    </style>
+
+    <!-- ===================================
+         COMPONENT AFRAME CUSTOM
+         Detectare coliziuni pentru rig
+         =================================== -->
+    <script>
+      /* COMPONENT: Simple Collisions
+         Detectează coliziuni între jucător și obstacole
+         Previne trecerea prin pereți și alte elemente
+      */
+      AFRAME.registerComponent('simple-collisions', {
+        init: function () {
+          this.lastSafePos = new THREE.Vector3();
+          setTimeout(() => { this.lastSafePos.copy(this.el.object3D.position); }, 50);
+        },
+        tick: function () {
+          let pos = this.el.object3D.position;
+          let r = 0.3; // Raza coliziuni jucător
+          
+          // Definire obstacole în scenă (pereți, platforme)
+          let obstacles = [
+            { xMin: -2.6, xMax: -2.4, zMin: -8.0, zMax: 0.0 }, // Perete stâng
+            { xMin:  2.4, xMax:  2.6, zMin: -8.0, zMax: 0.0 }, // Perete dreapt
+            { xMin: -2.5, xMax:  2.5, zMin: -8.25, zMax: -7.75 }, // Perete spate
+            { xMin: -2.5, xMax:  2.5, zMin: -1.6, zMax: -0.8 } // Platformă
+          ];
+          
+          let collision = false;
+          for (let obs of obstacles) {
+            if (pos.x > obs.xMin - r && pos.x < obs.xMax + r && pos.z > obs.zMin - r && pos.z < obs.zMax + r) {
+              collision = true; break;
+            }
+          }
+          
+          // Dacă coliziune, revert la ultima poziție sigură
+          if (collision) pos.copy(this.lastSafePos);
+          else this.lastSafePos.copy(pos);
+          
+          pos.y = 0; // Împiedică căderea/urcarea
+        }
+      });
+    </script>
+  </head>
+  <body>
+    
+    <!-- ===================================
+         INTERFAȚĂ 2D - BUTOANE PRINCIPALE
+         =================================== -->
+    <button id="btn-toggle-eval" class="ui-layer" onclick="toggleEval()">📝 Oferă Feedback</button>
+    <button id="btn-toggle-rules" class="ui-layer" onclick="toggleRules()">📖 Reguli Joc</button>
+
+    <!-- ===================================
+         PANOUL FEEDBACK/EVALUARE
+         Formular cu întrebări după joc
+         =================================== -->
+    <div id="evaluare-panel" class="ui-layer">
+      <h3 style="margin: 0 0 10px 0; color: #333;">Evaluare Joc</h3>
+      
+      <!-- ÎNTREBAREA 1: Interacțiune -->
+      <p style="margin: 0 0 5px 0; color: #555; font-size: 14px;">1. Cum a fost interacțiunea?</p>
+      <div style="display: flex; gap: 5px; margin-bottom: 15px;">
+        <button class="ui-btn q1-btn" onclick="setEval('interactiune', 'Buna', this)">Bună</button>
+        <button class="ui-btn q1-btn" onclick="setEval('interactiune', 'Medie', this)">Medie</button>
+        <button class="ui-btn q1-btn" onclick="setEval('interactiune', 'Slaba', this)">Slabă</button>
+      </div>
+      
+      <!-- ÎNTREBAREA 2: Scena preferată -->
+      <p style="margin: 0 0 5px 0; color: #555; font-size: 14px;">2. Care scenă ți-a plăcut mai mult?</p>
+      <div style="display: flex; gap: 5px; margin-bottom: 15px;">
+        <button class="ui-btn q2-btn" onclick="setEval('scena', 'Outdoor', this)">Outdoor</button>
+        <button class="ui-btn q2-btn" onclick="setEval('scena', 'Buncar', this)">Buncăr</button>
+      </div>
+      
+      <!-- BUTON TRIMITERE ȘI MESAJ CONFIRMARE -->
+      <button onclick="trimiteEvaluare()" style="width: 100%; padding: 10px; background: #2E8B57; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">Trimite Evaluarea</button>
+      <p id="eval-msg" style="color: #2E8B57; font-size: 14px; display: none; margin-top: 10px; text-align: center; font-weight: bold;">Mulțumim pentru feedback!</p>
+    </div>
+
+    <!-- ===================================
+         PANOUL REGULAMENT
+         Instrucțiuni și reguli ale jocului
+         =================================== -->
+    <div id="reguli-panel" class="ui-layer">
+      <h3 class="reguli-titlu">Cum se joacă?</h3>
+      <p class="reguli-text">⏳ <strong>Timp & Muniție:</strong> Runda este cronometrată la 30s, iar gloanțele sunt limitate.</p>
+      <p class="reguli-text">🔫 <strong>Reîncărcare:</strong> Privește spre un încărcător de pe masă și dă click, SAU apasă tasta <strong>R</strong> pe tastatură.</p>
+      
+      <!-- REGULAMENT SCENA 1 -->
+      <h4 class="reguli-titlu" style="margin-top: 15px;">Scena 1: Outdoor Range</h4>
+      <p class="reguli-text">🔴 <strong>Ținte Roșii:</strong> +1 punct.</p>
+      <p class="reguli-text">🔵 <strong>Ținte Albastre:</strong> Dacă tragi în ele, <strong>îți scade 1 punct</strong>!</p>
+
+      <!-- REGULAMENT SCENA 2 -->
+      <h4 class="reguli-titlu" style="margin-top: 15px;">Scena 2: Buncăr</h4>
+      <p class="reguli-text">🔴 <strong>Manechine Roșii (Inamici):</strong> Împușcă-i! Loviturile în trunchi/cap sunt fatale instant (+2 puncte). Loviturile în membre necesită mai multe gloanțe (+1 punct).</p>
+      <p class="reguli-text">🔵 <strong>Manechine Albastre (Aliați):</strong> Ai grijă să nu îi împuști, altfel <strong>jocul se oprește</strong>!</p>
+      <p class="reguli-text" style="color: #d9534f; font-weight: bold;">⚠️ Atenție: Unii aliați se pot transforma în trădători după câteva secunde!</p>
+    </div>
+    
+    <!-- ===================================
+         SCENĂ 3D - A-FRAME
+         =================================== -->
+    <a-scene>
+      <a-assets>
+        <!-- FIȘIERE AUDIO (opționale, folosim sinteză dacă nu se găsesc) -->
+        <audio id="snd-shoot" src="shoot.mp3" preload="auto"></audio>
+        <audio id="snd-empty" src="empty.mp3" preload="auto"></audio>
+        <audio id="snd-reload" src="reload.mp3" preload="auto"></audio>
+      </a-assets>
+
+      <!-- ILUMINARE AMBIENTĂ -->
+      <a-light type="ambient" color="#667788" intensity="0.85"></a-light>
+
+      <!-- ===================================
+           SCENA 1: OUTDOOR RANGE
+           Ținte multiple în aer liber
+           =================================== -->
+      <a-entity id="scene-1">
+        <!-- CER ȘI TEREN -->
+        <a-sky color="#3A4B5C"></a-sky>
+        <a-plane position="0 0 0" rotation="-90 0 0" width="100" height="100" color="#4A6349"></a-plane>
+        
+        <!-- PLATFORMĂ DE TRAGERE -->
+        <a-box position="0 0.05 -1.5" width="5.2" height="0.1" depth="7" color="#555555"></a-box>
+
+        <!-- PEREȚI ȘI STRUCTURI -->
+        <a-box position="0 2 -8" width="5" height="4" depth="0.5" color="#444444"></a-box>
+        <a-box position="-2.5 2 -4" width="0.2" height="4" depth="8" color="#6b3e1b"></a-box>
+        <a-box position="2.5 2 -4" width="0.2" height="4" depth="8" color="#6b3e1b"></a-box>
+        <a-box position="0 4.1 -4" width="5.2" height="0.2" depth="8" color="#4a311f"></a-box>
+
+        <!-- SISTEM DE ILUMINARE (LAMPĂ SUSPENDATĂ) -->
+        <a-entity position="0 4.0 -5.5">
+          <a-cylinder radius="0.01" height="0.5" position="0 -0.25 0" color="#111"></a-cylinder>
+          <a-cone radius-bottom="0.4" radius-top="0.05" height="0.3" position="0 -0.5 0" color="#222" material="side: double"></a-cone>
+          <a-sphere radius="0.08" position="0 -0.63 0" color="#FFAA55" material="shader: flat; emissive: #FFAA55" light="type: point; color: #FFAA55; intensity: 1.8; distance: 15; decay: 2"></a-sphere>
+        </a-entity>
+
+        <!-- BUTON START SCENA 1 -->
+        <a-box id="start-btn" position="0 2 -7.5" width="1.5" height="0.8" depth="0.1" color="#2E8B57" class="interactive">
+          <a-text value="INCEPE" align="center" position="0 0 0.06" color="white" width="5" material="shader: flat"></a-text>
+        </a-box>
+
+        <!-- PORTAL CĂTRE SCENA 2 (INDOOR RANGE) -->
+        <a-box id="portal-btn" position="2.35 1.5 -1.2" width="0.1" height="0.6" depth="1" color="#0055FF" class="interactive">
+          <a-text value="INDOOR\nRANGE" align="center" position="-0.06 0 0" rotation="0 -90 0" color="white" width="3" material="shader: flat"></a-text>
+        </a-box>
+
+        <!-- CONTAINER PENTRU ȚINTE GENERATE DINAMIC -->
+        <a-entity id="targets-s1"></a-entity>
+      </a-entity>
+
+      <!-- ===================================
+           SCENA 2: INDOOR RANGE (BUNCĂR)
+           Manechine inamici și aliați
+           =================================== -->
+      <a-entity id="scene-2" visible="false">
+        <!-- CER ȘI TEREN INTERIOR -->
+        <a-sky color="#0a0a0a"></a-sky> 
+        <a-plane position="0 0.05 -5" rotation="-90 0 0" width="10" height="20" color="#2a2a2a"></a-plane>
+        
+        <!-- PEREȚI BUNCĂR -->
+        <a-box position="0 2 -12" width="10" height="4" depth="0.2" color="#1c1c1c"></a-box> 
+        <a-box position="-5 2 -5" width="0.2" height="4" depth="20" color="#222"></a-box> 
+        <a-box position="5 2 -5" width="0.2" height="4" depth="20" color="#222"></a-box> 
+        <a-box position="0 4.1 -5" width="10" height="0.2" depth="20" color="#111"></a-box> 
+
+        <!-- ILUMINARE INTERIOARE -->
+        <a-entity position="0 3.9 -10.5">
+          <a-box width="2" height="0.1" depth="0.2" color="#fff" material="shader: flat; emissive: #ffffff" light="type: point; intensity: 1; distance: 10; decay: 2"></a-box>
+        </a-entity>
+        
+        <!-- BUTON START SCENA 2 -->
+        <a-box id="start-btn-2" position="0 2 -11.5" width="1.5" height="0.8" depth="0.1" color="#2E8B57" class="interactive interactive-s2">
+          <a-text value="INCEPE" align="center" position="0 0 0.06" color="white" width="5" material="shader: flat"></a-text>
+        </a-box>
+
+        <!-- PORTAL ÎNAPOI CĂTRE SCENA 1 -->
+        <a-box id="portal-back-btn" position="4.8 1.5 -1.2" width="0.1" height="0.6" depth="1" color="#4A6349" class="interactive interactive-s2">
+          <a-text value="OUTDOOR\nRANGE" align="center" position="-0.06 0 0" rotation="0 -90 0" color="white" width="3" material="shader: flat"></a-text>
+        </a-box>
+
+        <!-- CONTAINER PENTRU MANECHINE GENERATE DINAMIC -->
+        <a-entity id="targets-s2"></a-entity>
+      </a-entity>
+
+      <!-- ===================================
+           OBIECTE GLOBALE
+           =================================== -->
+      
+      <!-- MASĂ DE TRAGERE (Pentru armu și încărcatoare) -->
+      <a-box position="0 0.5 -1.2" width="5" height="1" depth="0.8" color="#1A1A1A"></a-box>
+
+      <!-- ARMA PE MASĂ (De luat la inceput) -->
+      <a-entity id="gun-on-table" position="0.3 1.05 -1.1" rotation="0 -20 0">
+        <a-box id="gun-hitbox" class="interactive" position="0 0 0" width="0.8" height="0.4" depth="0.4" material="opacity: 0; transparent: true"></a-box>
+        <a-cylinder rotation="0 0 90" radius="0.04" height="0.8" color="#222"></a-cylinder>
+        <a-box position="-0.15 0.1 0" width="0.1" height="0.15" depth="0.1" color="#0a0a0a"></a-box>
+        <a-text value="CLICK PT A LUA ARMA" align="center" position="0 0.3 0" color="#00FF00" scale="0.4 0.4 0.4" material="shader: flat"></a-text>
+      </a-entity>
+
+      <!-- CONTAINER PENTRU ÎNCĂRCATOARE VIZIBILE -->
+      <a-entity id="mags-container" position="0 0 0"></a-entity>
+
+      <!-- HUD (HEAD-UP DISPLAY) - Informații joc în aer -->
+      <a-entity id="hud" position="0 3 -3.5">
+        <a-text id="score-text" value="Scor: 0" color="#FFD700" position="-1.5 0 0" align="center" material="shader: flat"></a-text>
+        <a-text id="timer-text" value="Timp: 30" color="#FF5555" position="1.5 0 0" align="center" material="shader: flat"></a-text>
+        <a-text id="ammo-text" value="Gloante: 10 | Mags: 6" color="#00FFFF" position="0 -0.5 0" align="center" material="shader: flat"></a-text>
+        <a-text id="msg-text" value="Ia arma de pe masa!" color="white" position="0 0.5 0" align="center" scale="0.8" material="shader: flat"></a-text>
+      </a-entity>
+
+      <!-- RIGUL JUCĂTORULUI (Cameră + Armă în mână) -->
+      <a-entity id="rig" movement-controls="speed: 0.15" simple-collisions position="0 0 0.5">
+        <a-entity camera position="0 1.6 0" look-controls>
+          <!-- CURSOR PENTRU RAYCASTING (Click detection) -->
+          <a-cursor id="cursor" color="white" scale="0.8 0.8 0.8" raycaster="objects: .interactive, .interactive-s2"></a-cursor>
+          
+          <!-- ARMA ÎN MÂNĂ (Vizibilă când o ia jucătorul) -->
+          <a-entity id="gun-in-hand" position="0.25 -0.3 -0.5" visible="false" animation__recoil="property: position; to: 0.25 -0.3 -0.4; dur: 50; dir: alternate; loop: 1; startEvents: shoot">
+            <a-cylinder rotation="-90 0 0" radius="0.04" height="0.8" color="#222"></a-cylinder>
+            <a-box position="0 -0.05 0.3" width="0.1" height="0.15" depth="0.4" color="#0a0a0a"></a-box>
+            <!-- FLASH LA GURĂ ARMEI (Lumina muzzle flash) -->
+            <a-cone id="muzzle-flash" position="0 0 -0.45" radius-bottom="0.05" radius-top="0.01" height="0.2" rotation="-90 0 0" color="#FFA500" material="shader: flat; emissive: #FFA500" visible="false" light="type: point; color: #FFAA00; intensity: 0; distance: 3; decay: 2"></a-cone>
+          </a-entity>
+        </a-entity>
+      </a-entity>
+
+    </a-scene>
+
+    <!-- ===================================
+         LOGICĂ JOCULUI - JAVASCRIPT
+         =================================== -->
+    <script>
+      /* ╔════════════════════════════════════════════════════════════════╗
+         ║       SECȚIUNEA 1: INTERFAȚĂ 2D - BUTOANE ȘI PANOURI          ║
+         ╚════════════════════════════════════════════════════════════════╝ */
+
+      // Obiect pentru stocarea răspunsurilor la feedback
+      let feedbackData = { interactiune: null, scena: null };
+
+      /* FUNCȚIE: Afișează/Ascunde panoul de feedback */
+      function toggleEval() {
+        let panel = document.getElementById('evaluare-panel');
+        let rulesPanel = document.getElementById('reguli-panel');
+        if (panel.style.display === 'none' || panel.style.display === '') {
+          panel.style.display = 'block';
+          rulesPanel.style.display = 'none'; // Ascunde panoul regulament
+        } else {
+          panel.style.display = 'none';
+        }
+      }
+
+      /* FUNCȚIE: Afișează/Ascunde panoul de regulament */
+      function toggleRules() {
+        let panel = document.getElementById('reguli-panel');
+        let evalPanel = document.getElementById('evaluare-panel');
+        if (panel.style.display === 'none' || panel.style.display === '') {
+          panel.style.display = 'block';
+          evalPanel.style.display = 'none'; // Ascunde panoul feedback
+        } else {
+          panel.style.display = 'none';
+        }
+      }
+
+      /* FUNCȚIE: Setează evaluarea (selectează răspunsuri) */
+      function setEval(categorie, valoare, btnElement) {
+        feedbackData[categorie] = valoare;
+        let btnClass = categorie === 'interactiune' ? 'q1-btn' : 'q2-btn';
+        let buttons = document.querySelectorAll('.' + btnClass);
+        buttons.forEach(btn => btn.classList.remove('selected'));
+        btnElement.classList.add('selected');
+      }
+
+      /* FUNCȚIE: Trimite evaluarea și afișează mesaj de confirmare */
+      function trimiteEvaluare() {
+        if (!feedbackData.interactiune || !feedbackData.scena) {
+          alert("Te rugăm să răspunzi la ambele întrebări pentru a trimite evaluarea!");
+          return;
+        }
+        console.log("Date Evaluare Trimise:", feedbackData);
+        document.getElementById('eval-msg').style.display = 'block';
+        setTimeout(() => {
+          document.getElementById('evaluare-panel').style.display = 'none';
+          document.getElementById('eval-msg').style.display = 'none';
+          feedbackData = { interactiune: null, scena: null };
+          document.querySelectorAll('.ui-btn').forEach(btn => btn.classList.remove('selected'));
+        }, 2000);
+      }
+
+      /* ╔════════════════════════════════════════════════════════════════╗
+         ║         SECȚIUNEA 2: AUDIO CUSTOM ȘI SINTEZĂ SUNET            ║
+         ║    Fișiere audio + fallback cu Web Audio API oscilator        ║
+         ╚════════════════════════════════════════════════════════════════╝ */
+
+      // Referințe la fișierele audio
+      const sndShoot = document.querySelector('#snd-shoot');
+      const sndEmpty = document.querySelector('#snd-empty');
+      const sndReload = document.querySelector('#snd-reload');
+
+      // Context Web Audio API (pentru sinteză sunet)
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+      /* FUNCȚIE: Redă sunete sintetice cu oscilatoare
+         Parametru type: 'hit', 'error', 'empty', 'reload'
+      */
+      function playSynthSound(type) {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const osc = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+        osc.connect(gainNode); 
+        gainNode.connect(audioCtx.destination);
+        const now = audioCtx.currentTime;
+
+        if (type === 'hit') {
+          // Sunet pentru lovitură reușită (sine wave)
+          osc.type = 'sine'; 
+          osc.frequency.setValueAtTime(1200, now);
+          gainNode.gain.setValueAtTime(0.8, now); 
+          gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+          osc.start(now); 
+          osc.stop(now + 0.3);
+        } else if (type === 'error') {
+          // Sunet pentru eroare (sawtooth wave)
+          osc.type = 'sawtooth'; 
+          osc.frequency.setValueAtTime(200, now);
+          gainNode.gain.setValueAtTime(0.5, now); 
+          gainNode.gain.linearRampToValueAtTime(0.01, now + 0.4);
+          osc.start(now); 
+          osc.stop(now + 0.4);
+        } else if (type === 'empty') {
+          // Sunet pentru gloanță goală (square wave scurt)
+          osc.type = 'square'; 
+          osc.frequency.setValueAtTime(600, now); 
+          osc.frequency.exponentialRampToValueAtTime(50, now + 0.05);
+          gainNode.gain.setValueAtTime(0.5, now); 
+          gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.05);
+          osc.start(now); 
+          osc.stop(now + 0.05);
+        } else if (type === 'reload') {
+          // Sunet pentru reîncărcare (sine sweep up)
+          osc.type = 'sine'; 
+          osc.frequency.setValueAtTime(300, now); 
+          osc.frequency.linearRampToValueAtTime(600, now + 0.2);
+          gainNode.gain.setValueAtTime(0.3, now); 
+          gainNode.gain.linearRampToValueAtTime(0, now + 0.2);
+          osc.start(now); 
+          osc.stop(now + 0.2);
+        }
+      }
+
+      /* FUNCȚIE: Redă fișier audio sau revine la sinteză dacă nu este disponibil */
+      function playAudioFile(audioElement, fallbackType) {
+        if(audioElement && audioElement.readyState >= 2) {
+          audioElement.currentTime = 0; 
+          let playPromise = audioElement.play();
+          if (playPromise !== undefined) playPromise.catch(() => playSynthSound(fallbackType));
+        } else playSynthSound(fallbackType);
+      }
+
+      /* ╔════════════════════════════════════════════════════════════════╗
+         ║         SECȚIUNEA 3: VARIABILE GLOBALE - STARE JOC             ║
+         ╚════════════════════════════════════════════════════════════════╝ */
+
+      let currentScene = 1;          // 1 = Outdoor, 2 = Buncăr
+      let hasGun = false;            // Dacă jucătorul a luat arma
+      let score = 0;                 // Punctajul curent
+      let timeLeft = 30;             // Timp rămas în rundă
+      let gameActive = false;        // Joc în desfășurare
+      let ammo = 10;                 // Gloanțe curente
+      const maxAmmo = 10;            // Maxim gloanțe pe magozin
+      let timerInterval;             // ID interval pentru timer
+      let redTargetsCount = 0;       // Ținte roșii active în Scena 1
+      let lastShootTime = 0;         // Timestamp ultim shot (cooldown 250ms)
+      let availableMags = [true, true, true, true, true, true]; // Magozine disponibile
+
+      // Referințe DOM - HUD și text
+      const scoreText = document.querySelector('#score-text');
+      const timerText = document.querySelector('#timer-text');
+      const ammoText = document.querySelector('#ammo-text');
+      const msgText = document.querySelector('#msg-text');
+      const cursor = document.querySelector('#cursor');
+      
+      // Referințe DOM - Magozine și armă
+      const magsContainer = document.querySelector('#mags-container');
+      const gunOnTable = document.querySelector('#gun-on-table');
+      const gunHitbox = document.querySelector('#gun-hitbox');
+      const gunInHand = document.querySelector('#gun-in-hand');
+      const flash = document.querySelector('#muzzle-flash');
+
+      // Referințe DOM - Scena 1
+      const scene1 = document.querySelector('#scene-1');
+      const startBtnS1 = document.querySelector('#start-btn');
+      const targetsS1 = document.querySelector('#targets-s1');
+      const portalBtn = document.querySelector('#portal-btn');
+      
+      // Referințe DOM - Scena 2
+      const scene2 = document.querySelector('#scene-2');
+      const startBtnS2 = document.querySelector('#start-btn-2');
+      const targetsS2 = document.querySelector('#targets-s2');
+      const portalBackBtn = document.querySelector('#portal-back-btn');
+
+      /* ╔════════════════════════════════════════════════════════════════╗
+         ║          SECȚIUNEA 4: EVENT LISTENERS - INTERACȚIUNI          ║
+         ╚════════════════════════════════════════════════════════════════╝ */
+
+      /* EVENT: Click pe armă (o ia de pe masă) */
+      gunHitbox.addEventListener('mousedown', () => {
+        hasGun = true;
+        gunOnTable.setAttribute('visible', 'false');
+        gunHitbox.classList.remove('interactive');
+        gunInHand.setAttribute('visible', 'true');
+        ammo = maxAmmo; 
+        updateHUD();
+        msgText.setAttribute('value', 'Priveste INCEPE');
+        playAudioFile(sndReload, 'reload'); 
+      });
+
+      /* EVENT: Portal către Scena 2 (Buncăr) */
+      portalBtn.addEventListener('mousedown', () => {
+        if (!hasGun) { msgText.setAttribute('value', 'Ia arma intai!'); return; }
+        if (gameActive) { gameActive = false; clearInterval(timerInterval); targetsS1.innerHTML = ''; }
+        score = 0; timeLeft = 30; ammo = maxAmmo; availableMags = [true, true, true, true, true, true]; currentScene = 2;
+        scene1.setAttribute('visible', 'false'); scene2.setAttribute('visible', 'true');
+        startBtnS2.setAttribute('visible', 'true'); startBtnS2.setAttribute('scale', '1 1 1');
+        renderMagazines(); updateHUD(); timerText.setAttribute('value', `Timp: ${timeLeft}`);
+        msgText.setAttribute('value', 'Ai intrat in buncar. Priveste INCEPE');
+      });
+
+      /* EVENT: Portal înapoi la Scena 1 (Outdoor) */
+      portalBackBtn.addEventListener('mousedown', () => {
+        if (!hasGun) { msgText.setAttribute('value', 'Ia arma intai!'); return; }
+        if (gameActive) { gameActive = false; clearInterval(timerInterval); targetsS2.innerHTML = ''; }
+        score = 0; timeLeft = 30; ammo = maxAmmo; availableMags = [true, true, true, true, true, true]; currentScene = 1;
+        scene2.setAttribute('visible', 'false'); scene1.setAttribute('visible', 'true');
+        startBtnS1.setAttribute('visible', 'true'); startBtnS1.setAttribute('scale', '1 1 1');
+        renderMagazines(); updateHUD(); timerText.setAttribute('value', `Timp: ${timeLeft}`);
+        msgText.setAttribute('value', 'Ai intrat in Outdoor Range. Priveste INCEPE');
+      });
+
+      /* FUNCȚIE: Actualizează HUD (scor, muncție, magozine) */
+      function updateHUD() {
+        let magsLeft = availableMags.filter(m => m === true).length;
+        scoreText.setAttribute('value', `Scor: ${score}`);
+        ammoText.setAttribute('value', `Gloante: ${ammo}/${maxAmmo} | Mags: ${magsLeft}`);
+        // Culoare roșie dacă rămân ≤3 gloanțe
+        ammoText.setAttribute('color', ammo > 3 ? '#00FFFF' : '#FF0000');
+      }
+
+      /* FUNCȚIE: Redă magozinele pe masă (vizibile pentru click) */
+      function renderMagazines() {
+        magsContainer.innerHTML = '';
+        for(let i = 0; i < 6; i++) {
+          if (!availableMags[i]) continue; // Sari magozinele deja folosite
+          
+          let magGroup = document.createElement('a-entity');
+          magGroup.classList.add('mag-group');
+          magGroup.setAttribute('data-index', i); 
+          magGroup.setAttribute('position', `${0.6 + i * 0.2} 1.05 -1.2`);
+          magGroup.setAttribute('rotation', '0 -20 0');
+
+          let hitbox = document.createElement('a-box');
+          hitbox.setAttribute('width', '0.15'); hitbox.setAttribute('height', '0.3'); hitbox.setAttribute('depth', '0.2');
+          hitbox.setAttribute('material', 'opacity: 0; transparent: true');
+          hitbox.setAttribute('class', 'interactive mag-hitbox');
+          
+          let body = document.createElement('a-box');
+          body.setAttribute('width', '0.08'); body.setAttribute('height', '0.25'); body.setAttribute('depth', '0.15');
+          body.setAttribute('color', '#1a1a1a'); body.setAttribute('rotation', '10 0 0');
+          
+          let bullet = document.createElement('a-cylinder');
+          bullet.setAttribute('radius', '0.015'); bullet.setAttribute('height', '0.12'); bullet.setAttribute('color', '#FFD700');
+          bullet.setAttribute('rotation', '90 0 0'); bullet.setAttribute('position', '0 0.1 0.03');
+
+          magGroup.appendChild(hitbox); magGroup.appendChild(body); magGroup.appendChild(bullet);
+          magsContainer.appendChild(magGroup);
+        }
+      }
+
+      /* ╔════════════════════════════════════════════════════════════════╗
+         ║    SECȚIUNEA 5: FUNCȚIE DE REÎNCĂRCARE (RELOAD)               ║
+         ║    Se declanșează cu click pe magozin SAU tasta R             ║
+         ╚════════════════════════════════════════════════════════════════╝ */
+
+      function performReload(targetIndex = -1) {
+        if (!hasGun) return;
+        
+        let magsLeft = availableMags.filter(m => m === true).length;
+        
+        if (ammo < maxAmmo && magsLeft > 0) {
+          // Alege magozinul de reîncărcat
+          let selectedIndex = targetIndex !== -1 ? targetIndex : availableMags.lastIndexOf(true);
+          if (selectedIndex !== -1) {
+            availableMags[selectedIndex] = false; 
+            ammo = maxAmmo;
+            playAudioFile(sndReload, 'reload'); 
+            renderMagazines(); 
+            updateHUD();
+          }
+        } else if (ammo === 0 && magsLeft === 0) {
+          // Nu mai sunt magozine
+          playAudioFile(sndEmpty, 'empty'); 
+        }
+      }
+
+      /* ╔════════════════════════════════════════════════════════════════╗
+         ║        SECȚIUNEA 6: EVENT LISTENERS - SHOOTING & RELOAD        ║
+         ║         Click pentru tragere, R-uri pentru reîncărcare        ║
+         ╚════════════════════════════════════════════════════════════════╝ */
+
+      /* EVENT: Click mouse (tragere) */
+      window.addEventListener('mousedown', (e) => {
+        // Ignoră click-urile pe interfața 2D (butoane, panouri)
+        if(e.target.closest('.ui-layer')) return;
+
+        if (!hasGun) return;
+
+        // Detectează ce element a fost clickuit cu raycaster
+        let raycaster = cursor.components.raycaster;
+        if (raycaster && raycaster.intersectedEls.length > 0) {
+            let el = raycaster.intersectedEls[0];
+            let id = el.getAttribute('id');
+            // Dacă e buton special, nu trage
+            if (['start-btn', 'start-btn-2', 'portal-btn', 'portal-back-btn', 'gun-hitbox'].includes(id) || el.classList.contains('mag-hitbox')) {
+                let magHitbox = el.closest('.mag-hitbox');
+                if (magHitbox) performReload(parseInt(magHitbox.parentElement.getAttribute('data-index')));
+                return;
+            }
+        }
+
+        // Cooldown 250ms între lovituri (rapiditate foc)
+        let now = Date.now();
+        if (now - lastShootTime < 250) return; 
+        lastShootTime = now;
+
+        if (ammo > 0) {
+          // Tragere normală
+          ammo--; 
+          updateHUD(); 
+          playAudioFile(sndShoot, 'empty'); 
+          gunInHand.emit('shoot');
+          
+          // Efect luminos la muzzle
+          flash.setAttribute('visible', 'true'); 
+          flash.setAttribute('light', 'intensity: 1.5');
+          setTimeout(() => { 
+            flash.setAttribute('visible', 'false'); 
+            flash.setAttribute('light', 'intensity: 0'); 
+          }, 50);
+        } else {
+          // Tentă de tragere fără gloanțe
+          playAudioFile(sndEmpty, 'empty'); 
+          gunInHand.emit('shoot');
+        }
+      });
+
+      /* EVENT: Tasta R pentru reîncărcare rapidă */
+      window.addEventListener('keydown', (e) => { 
+        if ((e.key === 'r' || e.key === 'R') && hasGun) performReload(-1); 
+      });
+
+      /* ╔════════════════════════════════════════════════════════════════╗
+         ║        SECȚIUNEA 7: SCENA 1 - OUTDOOR RANGE                   ║
+         ║   Ținte care se mișcă: roșii (inamic) și albastre (civil)     ║
+         ╚════════════════════════════════════════════════════════════════╝ */
+
+      function spawnTargetS1() {
+        if (!gameActive || currentScene !== 1) return;
+        
+        const target = document.createElement('a-box');
+        target.setAttribute('width', '0.6'); target.setAttribute('height', '0.6'); target.setAttribute('depth', '0.05');
+        target.setAttribute('class', 'interactive');
+        
+        // Determină dacă ținta e civilă (albastră) sau inamică (roșie)
+        let isCivilian = (redTargetsCount > 0) ? Math.random() < 0.3 : false; 
+        if (!isCivilian) redTargetsCount++;
+        
+        target.setAttribute('color', isCivilian ? '#4499FF' : '#FF4444'); 
+        
+        // Poziție aleatoare
+        const x = (Math.random() - 0.5) * 3; 
+        const y = Math.random() * 1.5 + 1.2; 
+        const z = -Math.random() * 3 - 4.0;  
+        target.setAttribute('position', `${x} ${y} ${z}`);
+
+        // Țintele roșii se mișcă, cele albastre stau pe loc
+        if (!isCivilian) {
+          target.setAttribute('animation', `property: position; from: ${x} ${y} ${z}; to: ${x+1} ${y} ${z}; dur: 2000; dir: alternate; loop: true`);
+        }
+
+        // Logica click pe țintă
+        target.addEventListener('mousedown', () => {
+          if (gameActive && ammo > 0 && hasGun) { 
+            if (isCivilian) { 
+              // Tragere în civil: -1 punct
+              score--; 
+              playSynthSound('error'); 
+            } else { 
+              // Tragere în țintă: +1 punct
+              score++; 
+              redTargetsCount--; 
+              playSynthSound('hit'); 
+            }
+            updateHUD();
+            
+            // Animație cădere țintă
+            target.removeAttribute('animation'); 
+            target.setAttribute('color', '#333');
+            target.setAttribute('animation__fall', 'property: rotation; to: -90 0 0; dur: 300; loop: false');
+            target.classList.remove('interactive');
+            
+            // Generează altă țintă
+            setTimeout(() => { 
+              if(target.parentNode) target.parentNode.removeChild(target); 
+              spawnTargetS1(); 
+            }, 500);
+          }
+        });
+
+        // Civilii dispară după 3 secunde dacă nu sunt loviți
+        if (isCivilian) {
+          setTimeout(() => { 
+            if (target.parentNode && gameActive) { 
+              target.parentNode.removeChild(target); 
+              spawnTargetS1(); 
+            } 
+          }, 3000);
+        }
+        
+        targetsS1.appendChild(target);
+      }
+
+      /* ╔════════════════════════════════════════════════════════════════╗
+         ║        SECȚIUNEA 8: SCENA 2 - BUNCĂR                          ║
+         ║   Manechine cu multiple puncte: cap/trunchi (mortal)          ║
+         ║   și membre (non-mortal) - aliați (albastri) vs inamici      ║
+         ╚════════════════════════════════════════════════════════════════╝ */
+
+      function spawnTargetS2() {
+        if (!gameActive || currentScene !== 2) return;
+        
+        let group = document.createElement('a-entity');
+        let x = (Math.random() - 0.5) * 6; 
+        let zPos = -5 - Math.random() * 4; 
+        group.setAttribute('position', `${x} 0 ${zPos}`);
+
+        // Determină tipul: civil (aliat) sau inamic
+        let isCivilian = Math.random() < 0.35; 
+        let isTraitor = isCivilian && Math.random() < 0.4; // Unii aliați pot deveni trădători
+        let baseColor = isCivilian ? '#4499FF' : '#FF4444';
+        let targetState = { limbHits: 0, dead: false };
+
+        // Definire puncte de lovitură pe manechin
+        let parts = [
+          {type: 'fatal', x: 0, y: 1.8, z: 0, r: 0.15},     // Cap
+          {type: 'fatal', x: 0, y: 1.4, z: 0, r: 0.20},     // Trunchi
+          {type: 'limb', x: -0.3, y: 1.4, z: 0, r: 0.12},   // Braț stâng
+          {type: 'limb', x: 0.3, y: 1.4, z: 0, r: 0.12},    // Braț dreapt
+          {type: 'limb', x: -0.15, y: 0.8, z: 0, r: 0.15},  // Picior stâng
+          {type: 'limb', x: 0.15, y: 0.8, z: 0, r: 0.15}    // Picior dreapt
+        ];
+
+        let spheres = [];
+        
+        parts.forEach(p => {
+          let s = document.createElement('a-sphere');
+          s.setAttribute('position', `${p.x} ${p.y} ${p.z}`);
+          s.setAttribute('radius', p.r); 
+          s.setAttribute('color', baseColor);
+          s.setAttribute('material', 'shader: standard; roughness: 0.8');
+          s.setAttribute('class', 'interactive-s2'); 
+          
+          // Logica click pe fiecare parte
+          s.addEventListener('mousedown', () => {
+            if (!gameActive || ammo <= 0 || !hasGun || targetState.dead) return;
+            if (s.classList.contains('hit')) return; // Deja lovit
+            
+            // Dacă e civil și nu e trădător, jocul se oprește
+            if (isCivilian) { 
+              endGame("AI UCIS UN ALIAT!"); 
+              return; 
+            }
+
+            s.classList.add('hit'); 
+            let knockbackZ = -11.8 - zPos; 
+
+            if (p.type === 'fatal') {
+              // Lovitură fatală (cap/trunchi) - inamicul moare instant
+              targetState.dead = true; 
+              score += 2; 
+              s.setAttribute('color', '#333');
+            } else {
+              // Lovitură non-fatală (membru) - necesită 2 lovituri
+              targetState.limbHits++; 
+              s.setAttribute('color', '#FFD700'); 
+              s.setAttribute('animation__flinch', 'property: scale; from: 1.2 1.2 1.2; to: 1 1 1; dur: 200; easing: easeOutQuad');
+              s.classList.remove('interactive-s2'); 
+              
+              if (targetState.limbHits >= 2) { 
+                targetState.dead = true; 
+                score += 1; 
+              } else playSynthSound('hit'); 
+            }
+
+            // Dacă inamicul e mort, efecte de knockback
+            if (targetState.dead) {
+              updateHUD(); 
+              playSynthSound('hit');
+              
+              // Toate sferele se mișcă înapoi
+              spheres.forEach(obj => {
+                if (!obj.el.classList.contains('hit') || obj.el === s) {
+                  let rx = obj.basePos.x + (Math.random() - 0.5) * 1.5; 
+                  let ry = obj.basePos.y + (Math.random() - 0.5) * 1.5;
+                  obj.el.setAttribute('animation__knockback', `property: position; to: ${rx} ${ry} ${knockbackZ}; dur: 400; easing: easeOutQuad`);
+                  obj.el.classList.remove('interactive-s2');
+                }
+              });
+              
+              // Generează alt manechin
+              setTimeout(() => { 
+                if(group.parentNode) group.parentNode.removeChild(group); 
+                spawnTargetS2(); 
+              }, 1500);
+            }
+          });
+
+          group.appendChild(s); 
+          spheres.push({ el: s, basePos: p });
+        });
+
+        // Logica pentru civili
+        if (isCivilian) {
+            if (isTraitor) {
+                // Unii aliați devin inamici după câteva secunde
+                setTimeout(() => {
+                    if (gameActive && group.parentNode && !targetState.dead) {
+                        isCivilian = false; 
+                        spheres.forEach(obj => { obj.el.setAttribute('color', '#FF4444'); });
+                    }
+                }, 1500 + Math.random() * 1000);
+            } else {
+                // Aliații dispară dacă nu sunt ai interacționați
+                setTimeout(() => {
+                    if (gameActive && group.parentNode && !targetState.dead) { 
+                      group.parentNode.removeChild(group); 
+                      spawnTargetS2(); 
+                    }
+                }, 3000 + Math.random() * 1000);
+            }
+        }
+        
+        targetsS2.appendChild(group);
+      }
+
+      /* ╔════════════════════════════════════════════════════════════════╗
+         ║       SECȚIUNEA 9: CONTROALE PRINCIPALE ALE JOCULUI             ║
+         ║       Start, End, Timer                                        ║
+         ╚════════════════════════════════════════════════════════════════╝ */
+
+      /* FUNCȚIE: Începe jocul */
+      function startGame() {
+        if (gameActive || !hasGun) return;
+        
+        score = 0; 
+        timeLeft = 30; 
+        ammo = maxAmmo; 
+        redTargetsCount = 0; 
+        gameActive = true; 
+        availableMags = [true, true, true, true, true, true]; 
+        
+        renderMagazines(); 
+        updateHUD();
+        timerText.setAttribute('value', `Timp: ${timeLeft}`); 
+        msgText.setAttribute('value', '');
+        
+        // Spawneaza ținte în funcție de scenă
+        if (currentScene === 1) {
+          startBtnS1.setAttribute('visible', 'false'); 
+          startBtnS1.setAttribute('scale', '0 0 0');
+          spawnTargetS1(); 
+          setTimeout(spawnTargetS1, 1000);
+        } else {
+          startBtnS2.setAttribute('visible', 'false'); 
+          startBtnS2.setAttribute('scale', '0 0 0');
+          spawnTargetS2(); 
+          setTimeout(spawnTargetS2, 1200);
+        }
+
+        // Timer - coborâre la fiecare secundă
+        timerInterval = setInterval(() => {
+          timeLeft--; 
+          timerText.setAttribute('value', `Timp: ${timeLeft}`);
+          if (timeLeft <= 0) endGame();
+        }, 1000);
+      }
+
+      // Event listeners pentru butoanele START
+      startBtnS1.addEventListener('mousedown', startGame);
+      startBtnS2.addEventListener('mousedown', startGame);
+
+      /* FUNCȚIE: Termină jocul (timp expirat sau jucător ucide aliat) */
+      function endGame(failReason = null) {
+        if(!gameActive) return;
+        gameActive = false; 
+        clearInterval(timerInterval);
+        
+        // Mesaj final
+        if (failReason) { 
+          playSynthSound('error'); 
+          msgText.setAttribute('value', `${failReason}\nScor final: ${score}`); 
+        } else msgText.setAttribute('value', `TIMP EXPIRAT!\nScor final: ${score}`);
+        
+        timerText.setAttribute('value', 'Timp: 0');
+        targetsS1.innerHTML = ''; // Șterge ținte
+        targetsS2.innerHTML = ''; // Șterge manechine
+        
+        // Arată din nou butonul START după 4 secunde
+        setTimeout(() => {
+          if (currentScene === 1) { 
+            startBtnS1.setAttribute('visible', 'true'); 
+            startBtnS1.setAttribute('scale', '1 1 1'); 
+          } else { 
+            startBtnS2.setAttribute('visible', 'true'); 
+            startBtnS2.setAttribute('scale', '1 1 1'); 
+          }
+          msgText.setAttribute('value', 'Priveste INCEPE pt a reincerca');
+        }, 4000);
+      }
+
+      /* ╔════════════════════════════════════════════════════════════════╗
+         ║            SECȚIUNEA 10: INIȚIALIZARE JOCULUI                  ║
+         ╚════════════════════════════════════════════════════════════════╝ */
+
+      // Redă magozinele și actualizează HUD la început
+      renderMagazines(); 
+      updateHUD();
+    </script>
+  </body>
+</html>
+ 
